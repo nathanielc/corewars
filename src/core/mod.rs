@@ -2,9 +2,12 @@
 //! This is where all simulation of a Core Wars battle takes place.
 
 use log::trace;
-use std::ops::{Index, Range};
 use std::{collections::HashMap, convert::TryInto};
 use std::{collections::LinkedList, fmt};
+use std::{
+    fmt::Display,
+    ops::{Index, Range},
+};
 
 use thiserror::Error as ThisError;
 
@@ -71,6 +74,16 @@ pub enum BattleResult {
     Win,
     Loss(process::Error),
     Tie,
+}
+
+impl Display for BattleResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BattleResult::Win => write!(f, "Win"),
+            BattleResult::Loss(e) => write!(f, "Loss, {}", e),
+            BattleResult::Tie => write!(f, "Tie"),
+        }
+    }
 }
 
 type WarriorID = usize;

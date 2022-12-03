@@ -91,18 +91,17 @@ impl Queue {
 
 /// An process-related error occurred
 #[derive(ThisError, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum Error {
     /// All processes terminated
     #[error("no process running to execute")]
     NoRemainingProcesses,
 
     /// The warrior attempted to execute a DAT instruction
-    #[error("terminated due to reaching a DAT at offset {0}")]
+    #[error("reached a DAT at offset {0}")]
     ExecuteDat(Offset),
 
     /// The warrior attempted to execute a division by zero
-    #[error("terminated due to division by 0")]
+    #[error("division by 0")]
     DivideByZero,
 }
 
