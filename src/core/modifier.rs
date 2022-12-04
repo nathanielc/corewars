@@ -137,7 +137,7 @@ mod tests {
 
     use super::super::tests::build_core;
 
-    use corewars_core::load_file::{Field, Instruction, Opcode};
+    use crate::load_file::{Field, Instruction, Opcode};
 
     use pretty_assertions::assert_eq;
     use test_case::test_case;

@@ -118,7 +118,7 @@ mod tests {
 
         let starting_offset = Offset::new(10, 8000);
 
-        queue.push("p1".into(), starting_offset, None);
+        queue.push(1, starting_offset, None);
         assert_eq!(
             queue.peek().unwrap(),
             &Entry {
@@ -127,10 +127,10 @@ mod tests {
                 offset: starting_offset
             }
         );
-        assert!(queue.thread_count("p1") > 0);
+        assert!(queue.thread_count(1) > 0);
 
-        queue.push("p2".into(), starting_offset + 5, None);
-        assert!(queue.thread_count("p2") > 0);
+        queue.push(2, starting_offset + 5, None);
+        assert!(queue.thread_count(2) > 0);
 
         assert_eq!(
             queue.pop().unwrap(),
@@ -148,8 +148,8 @@ mod tests {
                 offset: starting_offset + 5
             }
         );
-        assert!(!queue.thread_count("p1") > 0);
-        assert!(queue.thread_count("p2") > 0);
+        assert!(!queue.thread_count(1) > 0);
+        assert!(queue.thread_count(2) > 0);
 
         assert_eq!(
             queue.pop().unwrap(),
@@ -159,14 +159,14 @@ mod tests {
                 offset: starting_offset + 5
             }
         );
-        assert!(!queue.thread_count("p1") > 0);
-        assert!(!queue.thread_count("p2") > 0);
+        assert!(!queue.thread_count(1) > 0);
+        assert!(!queue.thread_count(2) > 0);
 
         assert_eq!(queue.peek().unwrap_err(), Error::NoRemainingProcesses);
         assert_eq!(queue.pop().unwrap_err(), Error::NoRemainingProcesses);
 
-        assert!(!queue.thread_count("p1") > 0);
-        assert!(!queue.thread_count("p2") > 0);
+        assert!(!queue.thread_count(1) > 0);
+        assert!(!queue.thread_count(2) > 0);
     }
 
     #[test]
@@ -174,7 +174,7 @@ mod tests {
         let mut queue = Queue::new();
         let starting_offset = Offset::new(10, 8000);
 
-        queue.push("p1".into(), starting_offset, None);
+        queue.push(1, starting_offset, None);
         assert_eq!(
             queue.peek().unwrap(),
             &Entry {
@@ -183,10 +183,10 @@ mod tests {
                 offset: starting_offset
             }
         );
-        assert!(queue.thread_count("p1") > 0);
+        assert!(queue.thread_count(1) > 0);
 
         // should increment the thread id to 1
-        queue.push("p1".into(), starting_offset, None);
+        queue.push(1, starting_offset, None);
         queue.pop().unwrap();
         assert_eq!(
             queue.peek().unwrap(),
@@ -196,9 +196,9 @@ mod tests {
                 offset: starting_offset
             }
         );
-        assert!(queue.thread_count("p1") > 0);
+        assert!(queue.thread_count(1) > 0);
 
-        queue.push("p1".into(), starting_offset, Some(1));
+        queue.push(1, starting_offset, Some(1));
         queue.pop().unwrap();
         assert_eq!(
             queue.peek().unwrap(),
@@ -208,6 +208,6 @@ mod tests {
                 offset: starting_offset
             }
         );
-        assert!(queue.thread_count("p1") > 0);
+        assert!(queue.thread_count(1) > 0);
     }
 }

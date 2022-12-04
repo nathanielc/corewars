@@ -162,7 +162,7 @@ mod tests {
     use super::super::process::Error;
     use super::super::tests::build_core;
 
-    use corewars_core::load_file::{Field, Instruction, Modifier, Opcode};
+    use crate::load_file::{Field, Instruction, Modifier, Opcode};
 
     use test_case::test_case;
 

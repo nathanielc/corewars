@@ -1,4 +1,8 @@
-use std::{convert::TryInto, fmt};
+use fmt::Debug;
+use std::{
+    convert::TryInto,
+    fmt::{self, Display},
+};
 
 use lazy_static::lazy_static;
 use maplit::hashmap;
@@ -100,7 +104,7 @@ impl Field {
     }
 
     #[must_use]
-    pub fn as_offset(&self, core_size: u32) -> Offset {
+    pub fn as_offset(&self, core_size: i32) -> Offset {
         Offset::new(self.unwrap_value(), core_size)
     }
 
@@ -114,7 +118,7 @@ impl Field {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Instruction {
     pub opcode: Opcode,
     pub modifier: Modifier,
@@ -137,8 +141,13 @@ impl Instruction {
     }
 }
 
-impl fmt::Display for Instruction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+impl Debug for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // https://github.com/rust-lang/rust-clippy/issues/8643
         #[allow(clippy::format_in_format_args)]
         f.pad(&format!(

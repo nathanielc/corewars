@@ -83,7 +83,7 @@ fn apply_pointer(core: &mut Core, program_counter: Offset, field: &Field, eval_t
 
 #[cfg(test)]
 mod tests {
-    use corewars_core::load_file::{Instruction, Opcode};
+    use crate::load_file::{Instruction, Opcode};
 
     use pretty_assertions::assert_eq;
     use test_case::test_case;

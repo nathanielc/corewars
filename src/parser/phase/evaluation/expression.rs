@@ -157,7 +157,7 @@ fn evaluate_number(pair: &Pair) -> i32 {
 mod test {
     use super::*;
 
-    use crate::grammar::parse_expression;
+    use crate::parser::grammar::parse_expression;
 
     use test_case::test_case;
 

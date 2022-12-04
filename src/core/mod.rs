@@ -1,11 +1,14 @@
 //! A [`Core`](Core) is a block of "memory" in which Redcode programs reside.
 //! This is where all simulation of a Core Wars battle takes place.
 
+use rand::thread_rng;
+use rand::Rng;
+
 use log::trace;
 use std::{collections::HashMap, convert::TryInto};
 use std::{collections::LinkedList, fmt};
 use std::{
-    fmt::Display,
+    fmt::{Debug, Display},
     ops::{Index, Range},
 };
 
@@ -18,12 +21,6 @@ mod modifier;
 mod opcode;
 mod process;
 
-const DEFAULT_MAX_CYCLES: i32 = 10_000;
-const DEFAULT_CORE_SIZE: i32 = 8_000;
-const DEFAULT_MAX_PROCESSES: i32 = 10_000;
-const DEFAULT_MAX_WARRIOR_LENGTH: i32 = 100;
-const DEFAULT_MIN_DISTANCE: i32 = 1000;
-
 /// An error occurred during loading or core creation
 #[derive(ThisError, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -31,6 +28,10 @@ pub enum Error {
     /// The warrior was longer than allowed
     #[error("warrior has too many instructions")]
     WarriorTooLong,
+
+    /// The min distance between warriors is too large
+    #[error("min distance between warriors is too large")]
+    MinDistanceTooLarge,
 
     /// The specified core size was larger than the allowed max
     #[error("cannot create a core with size {0}; must be less than {}", u32::MAX)]
@@ -43,28 +44,34 @@ pub enum Error {
 /// The full memory core at a given point in time
 pub struct Core {
     config: CoreConfig,
-    instructions: Box<[Instruction]>,
+    instructions: Vec<Instruction>,
     process_queue: process::Queue,
     steps_taken: i32,
     log: LinkedList<Vec<Instruction>>,
-    warriors: Vec<WarriorID>,
+    num_warriors: usize,
 }
 
+#[derive(Clone, Debug)]
 pub struct CoreConfig {
     pub core_size: i32,
     pub max_cycles: i32,
     pub max_processes: i32,
     pub max_warrior_length: i32,
     pub min_distance: i32,
+    pub p_space: i32,
+    pub log: bool,
 }
+
 impl Default for CoreConfig {
     fn default() -> Self {
         Self {
-            core_size: DEFAULT_CORE_SIZE,
-            max_cycles: DEFAULT_MAX_CYCLES,
-            max_processes: DEFAULT_MAX_PROCESSES,
-            max_warrior_length: DEFAULT_MAX_WARRIOR_LENGTH,
-            min_distance: DEFAULT_MIN_DISTANCE,
+            core_size: 8_000,
+            max_cycles: 80_000,
+            max_processes: 8_000,
+            max_warrior_length: 100,
+            min_distance: 100,
+            p_space: 500,
+            log: false,
         }
     }
 }
@@ -86,7 +93,7 @@ impl Display for BattleResult {
     }
 }
 
-type WarriorID = usize;
+pub type WarriorID = usize;
 
 enum StepResult {
     Continue(WarriorID, Option<process::Error>),
@@ -97,13 +104,12 @@ impl Core {
     /// Create a new Core with the given number of possible instructions.
     pub fn new(config: CoreConfig) -> Self {
         Self {
-            instructions: vec![Instruction::default(); config.core_size as usize]
-                .into_boxed_slice(),
+            instructions: vec![Instruction::default(); config.core_size as usize],
             config,
             process_queue: process::Queue::new(),
             steps_taken: 0,
             log: LinkedList::new(),
-            warriors: Vec::new(),
+            num_warriors: 0,
         }
     }
 
@@ -127,11 +133,8 @@ impl Core {
     /// Get the number of instructions in the core (available to programs
     /// via the `CORESIZE` label)
     #[must_use]
-    pub fn len(&self) -> u32 {
-        self.instructions
-            .len()
-            .try_into()
-            .expect("Core has > u32::MAX instructions")
+    pub fn len(&self) -> i32 {
+        self.instructions.len() as i32
     }
 
     /// Whether the core is empty or not (almost always `false`)
@@ -175,19 +178,43 @@ impl Core {
 
     /// Load a [`Warrior`](Warrior) into the core starting at the front (first instruction of the core).
     /// Returns an error if the Warrior was too long to fit in the core, or had unresolved labels
-    pub fn load_warrior(&mut self, warrior: &Warrior) -> Result<WarriorID, Error> {
+    pub fn load_warriors(&mut self, warriors: &[Warrior]) -> Result<(), Error> {
+        self.num_warriors = warriors.len();
+        let spacing = self.config.core_size / warriors.len() as i32;
+        if spacing < self.config.min_distance {
+            return Err(Error::MinDistanceTooLarge);
+        }
+        let mut rng = thread_rng();
+        for (id, w) in warriors.iter().enumerate() {
+            let id = id as WarriorID;
+            let offset_value: i32 = if id == 0 {
+                0
+            } else {
+                id as i32 * spacing
+                    + rng.gen_range(
+                        self.config.min_distance..spacing - self.config.max_warrior_length,
+                    )
+            };
+            let offset = self.offset(offset_value);
+            self.load_warrior(id, offset, w)?;
+        }
+        Ok(())
+    }
+    fn load_warrior(
+        &mut self,
+        id: WarriorID,
+        offset: Offset,
+        warrior: &Warrior,
+    ) -> Result<(), Error> {
         if warrior.len() > self.config.max_warrior_length {
             return Err(Error::WarriorTooLong);
         }
-
-        let warrior_id = self.warriors.len() as WarriorID;
-        self.warriors.push(warrior_id);
 
         // TODO check that all instructions are fully resolved? Or require a type
         // safe way of loading a resolved warrior perhaps
 
         for (i, instruction) in warrior.program.instructions.iter().enumerate() {
-            self.instructions[i] = self.normalize(instruction.clone());
+            self.instructions[offset.value() as usize + i] = self.normalize(instruction.clone());
         }
 
         let origin: i32 = warrior
@@ -195,12 +222,12 @@ impl Core {
             .origin
             .unwrap_or(0)
             .try_into()
-            .expect(format!("Warrior {:?} has invalid origin", warrior_id).as_str());
+            .expect(format!("Warrior {:?} has invalid origin", id).as_str());
 
         self.process_queue
-            .push(warrior_id, self.offset(origin), None);
+            .push(id, self.offset(offset.value() + origin), None);
 
-        Ok(warrior_id)
+        Ok(())
     }
 
     fn normalize(&self, mut instruction: Instruction) -> Instruction {
@@ -224,15 +251,18 @@ impl Core {
 
     // Run a single cycle of simulation.
     fn step(&mut self) -> StepResult {
-        self.log.push_back(self.instructions.to_vec());
+        if self.config.log {
+            self.log.push_back(self.instructions.to_vec());
+        }
         let current_process = match self.process_queue.pop() {
             Ok(cp) => cp,
             Err(_err) => return StepResult::Halt,
         };
 
         trace!(
-            "Step{:>6} (t{:>2}): {:0>5} {}",
+            "Step{:>6} p:{:>2} t:{:>2} {:#06x} {:?}",
             self.steps_taken,
+            current_process.id,
             current_process.thread,
             current_process.offset.value(),
             self.get_offset(current_process.offset),
@@ -286,7 +316,9 @@ impl Core {
     /// Run a core to completion. Reports what happened to each warrior.
     pub fn run(&mut self) -> HashMap<WarriorID, BattleResult> {
         let mut results: HashMap<WarriorID, BattleResult> =
-            HashMap::with_capacity(self.warriors.len());
+            HashMap::with_capacity(self.num_warriors);
+
+        trace!("init:\n{:?}", self);
 
         while self.steps_taken < self.config.max_cycles {
             match self.step() {
@@ -299,8 +331,8 @@ impl Core {
             }
 
             // If we have more that one warrior battling and a single survivor then stop
-            if self.warriors.len() > 1 {
-                let survivor_count = self.warriors.len()
+            if self.num_warriors > 1 {
+                let survivor_count = self.num_warriors
                     - results
                         .iter()
                         .filter(|(_id, r)| matches!(r, BattleResult::Loss(_)))
@@ -310,75 +342,28 @@ impl Core {
                 }
             }
         }
-        let survivor_count = self.warriors.len()
+        let survivor_count = self.num_warriors
             - results
                 .iter()
                 .filter(|(_id, r)| matches!(r, BattleResult::Loss(_)))
                 .count();
         if survivor_count > 1 {
             // Insert the winners, which all tied.
-            for id in self.warriors.iter() {
+            for id in 0..self.num_warriors {
                 if results.get(&id).is_none() {
-                    results.insert(*id, BattleResult::Tie);
+                    results.insert(id, BattleResult::Tie);
                 }
             }
         } else {
             // Insert the winner, which won.
-            for id in self.warriors.iter() {
+            for id in 0..self.num_warriors {
                 if results.get(&id).is_none() {
-                    results.insert(*id, BattleResult::Win);
+                    results.insert(id, BattleResult::Win);
                 }
             }
         }
         // Return results mapped by name instead of id
         results
-    }
-
-    // TODO: clean up this impl a bunch
-    fn format_lines<F: Fn(usize, &Instruction) -> String, G: Fn(usize, &Instruction) -> String>(
-        &self,
-        formatter: &mut fmt::Formatter,
-        instruction_prefix: F,
-        instruction_suffix: G,
-    ) -> fmt::Result {
-        let mut lines = Vec::new();
-        let mut iter = self.instructions.iter().enumerate().peekable();
-
-        while let Some((i, instruction)) = iter.next() {
-            let add_line = |line_vec: &mut Vec<String>, j| {
-                line_vec.push(
-                    instruction_prefix(j, instruction)
-                        + &instruction.to_string()
-                        + &instruction_suffix(j, instruction),
-                );
-            };
-
-            if *instruction == Instruction::default() {
-                // Skip large chunks of defaulted instructions with a counter instead
-                let mut skipped_count = 0;
-                while let Some(&(_, inst)) = iter.peek() {
-                    if inst != &Instruction::default() {
-                        break;
-                    }
-                    skipped_count += 1;
-                    iter.next();
-                }
-
-                if skipped_count > 5 {
-                    add_line(&mut lines, i);
-                    lines.push(format!("; {:<6}({} more)", "...", skipped_count - 2));
-                    add_line(&mut lines, i + skipped_count);
-                } else {
-                    for _ in 0..skipped_count {
-                        add_line(&mut lines, i);
-                    }
-                }
-            } else {
-                add_line(&mut lines, i);
-            }
-        }
-
-        write!(formatter, "{}", lines.join("\n"))
     }
 }
 
@@ -388,31 +373,42 @@ impl Default for Core {
     }
 }
 
-impl fmt::Debug for Core {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        self.format_lines(
-            formatter,
-            |i, _| format!("{:0>6} ", i),
-            |i, _| {
-                if let Ok(process) = self.process_queue.peek() {
-                    let i: u32 = i.try_into().unwrap_or_else(|_| {
-                        panic!("Instruction count of warrior {:?} > u32::MAX", &process.id)
-                    });
-
-                    if i == process.offset.value() {
-                        return format!("{:>8}", "; <= PC");
-                    }
-                }
-
-                String::new()
-            },
-        )
+impl Debug for Core {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Core: {:?}\n", self.config)?;
+        write!(f, "{:?}", Instructions(&self.instructions))
     }
 }
 
-impl fmt::Display for Core {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        self.format_lines(formatter, |_, _| String::new(), |_, _| String::new())
+struct Instructions<'a>(&'a [Instruction]);
+
+impl<'a> Debug for Instructions<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut run = 0;
+        let mut last = None;
+        for (idx, instruction) in self.0.iter().enumerate() {
+            if let Some(last) = last {
+                if last == instruction {
+                    run += 1;
+                    continue;
+                } else if run > 0 {
+                    if run >= 5 {
+                        write!(f, "Repeats {} more times\n", run)?;
+                    } else {
+                        for i in 0..run {
+                            write!(f, "{:#06x} {:?}\n", idx - run + i, last)?;
+                        }
+                    }
+                    run = 0;
+                }
+            }
+            write!(f, "{:#06x} {:?}\n", idx, instruction)?;
+            last = Some(instruction);
+        }
+        if run > 0 {
+            write!(f, "Repeats {} more times\n", run)?;
+        }
+        Ok(())
     }
 }
 
@@ -428,26 +424,30 @@ impl Index<Range<usize>> for Core {
 mod tests {
     use pretty_assertions::assert_eq;
 
-    use corewars_core::load_file::{Field, Opcode, Program};
+    use crate::{
+        load_file::{Field, Opcode, Program},
+        parser,
+    };
 
     use super::*;
 
     /// Create a core from a string. Public since it is used by submodules' tests as well
     pub fn build_core(program: &str) -> Core {
-        let warrior = corewars_parser::parse(program).expect("Failed to parse warrior");
+        let warrior = parser::parse(program).expect("Failed to parse warrior");
 
         let mut core = Core::new(CoreConfig {
             max_cycles: 8000,
             ..CoreConfig::default()
         });
-        core.load_warrior(&warrior).expect("Failed to load warrior");
+        core.load_warriors(&vec![warrior])
+            .expect("Failed to load warrior");
         core
     }
 
     #[test]
     fn new_core() {
-        let mut core = Core::new(CoreConfig {
-            max_cycles: 128,
+        let core = Core::new(CoreConfig {
+            core_size: 128,
             ..CoreConfig::default()
         });
         assert_eq!(core.len(), 128);
@@ -456,11 +456,11 @@ mod tests {
     #[test]
     fn load_program() {
         let mut core = Core::new(CoreConfig {
-            max_cycles: 128,
+            core_size: 128,
             ..CoreConfig::default()
         });
 
-        let warrior = corewars_parser::parse(
+        let warrior = parser::parse(
             "
             mov $1, #1
             jmp #-1, #2
@@ -469,8 +469,9 @@ mod tests {
         )
         .expect("Failed to parse warrior");
 
-        core.load_warrior(&warrior).expect("Failed to load warrior");
-        let expected_core_size = 128_u32;
+        core.load_warriors(&vec![warrior])
+            .expect("Failed to load warrior");
+        let expected_core_size = 128_i32;
         assert_eq!(core.len(), expected_core_size);
 
         let jmp_target = (expected_core_size - 1).try_into().unwrap();
@@ -497,7 +498,7 @@ mod tests {
     #[test]
     fn load_program_too_long() {
         let mut core = Core::new(CoreConfig {
-            max_cycles: 128,
+            core_size: 128,
             ..CoreConfig::default()
         });
         let warrior = Warrior {
@@ -511,7 +512,7 @@ mod tests {
             ..Warrior::default()
         };
 
-        core.load_warrior(&warrior)
+        core.load_warriors(&vec![warrior])
             .expect_err("Should have failed to load warrior: too long");
 
         assert_eq!(core.len(), 128);

@@ -4,7 +4,7 @@
 ///
 /// ```
 /// # #[macro_use]
-/// # extern crate corewars_core;
+/// # extern crate corewars;
 /// #
 /// enum_string! {
 ///     #[derive(Copy, Clone, Debug, PartialEq, Eq)]

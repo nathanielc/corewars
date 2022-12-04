@@ -1,53 +1,33 @@
-use std::{
-    convert::TryInto,
-    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Rem, RemAssign, Sub, SubAssign},
-};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Rem, RemAssign, Sub, SubAssign};
 
 /// An absolute (non-negative) offset from the beginning of a core.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Offset {
-    value: u32,
-    core_size: u32,
+    value: i32,
+    core_size: i32,
+}
+
+fn offset_value(value: i32, core_size: i32) -> i32 {
+    value.rem_euclid(core_size)
 }
 
 impl Offset {
     /// Create a new Offset. The value will be adjusted to be within bounds of the core.
     ///
     /// # Panics
-    /// If `core_size` is invalid. Both 0 and `u32::MAX` are disallowed.
+    /// If `core_size` is invalid. Both 0 and `i32::MAX` are disallowed.
     #[must_use]
-    pub fn new(value: i32, core_size: u32) -> Self {
-        // TODO: should there be a minimum allowed core size?
-        TryInto::<i32>::try_into(core_size).unwrap_or_else(|_| {
-            panic!(
-                "Attempt to create offset with invalid core_size {}",
-                core_size
-            )
-        });
-
-        let mut result = Self {
-            value: 0,
+    pub fn new(value: i32, core_size: i32) -> Self {
+        Self {
+            value: offset_value(value, core_size),
             core_size,
-        };
-        result.set_value(value);
-        result
+        }
     }
 
     /// Get the value of the offset. This will always be less than the core size.
     #[must_use]
-    pub fn value(&self) -> u32 {
+    pub fn value(&self) -> i32 {
         self.value
-    }
-
-    /// Set the value of the offset. The value will be adjusted to be within
-    /// bounds of the core size.
-    pub fn set_value(&mut self, value: i32) {
-        let core_isize = self
-            .core_size
-            .try_into()
-            .expect("Core size should never be > i32::MAX");
-
-        self.value = value.rem_euclid(core_isize) as u32;
     }
 
     /// Verify another offset has the same core size. Panics otherwise
@@ -82,9 +62,7 @@ macro_rules! impl_offset_op {
             /// than the left-hand side.
             fn $op(self, rhs: Self) -> Self {
                 self.check_core_size(rhs);
-                let mut result = Self::new(0, self.core_size);
-                result.set_value((self.value as i32).$op(rhs.value as i32));
-                result
+                Self::new((self.value).$op(rhs.value), self.core_size)
             }
         }
 
@@ -120,22 +98,17 @@ macro_rules! impl_op {
 
         impl $assign_trait<$rhs> for Offset {
             fn $assign(&mut self, rhs: $rhs) {
-                self.set_value((self.$op(rhs)).value as _)
+                self.value = offset_value((self.$op(rhs)).value, self.core_size)
             }
         }
     };
 }
 
 impl_op! { i32, Add::add, AddAssign::add_assign }
-impl_op! { u32, Add::add, AddAssign::add_assign }
 impl_op! { i32, Div::div, DivAssign::div_assign }
-impl_op! { u32, Div::div, DivAssign::div_assign }
 impl_op! { i32, Mul::mul, MulAssign::mul_assign }
-impl_op! { u32, Mul::mul, MulAssign::mul_assign }
 impl_op! { i32, Rem::rem, RemAssign::rem_assign }
-impl_op! { u32, Rem::rem, RemAssign::rem_assign }
 impl_op! { i32, Sub::sub, SubAssign::sub_assign }
-impl_op! { u32, Sub::sub, SubAssign::sub_assign }
 
 #[cfg(test)]
 mod tests {
@@ -150,13 +123,6 @@ mod tests {
     }
 
     #[test]
-    fn set_offset_value() {
-        let mut offset = Offset::new(1234, 12);
-        offset.set_value(20);
-        assert_eq!(offset.value(), 8);
-    }
-
-    #[test]
     fn add_offset() {
         let mut offset = Offset::new(0, 12);
 
@@ -164,7 +130,7 @@ mod tests {
         assert_eq!(offset + -17_i32, Offset::new(7, 12));
         assert_eq!(offset + Offset::new(17, 12), Offset::new(5, 12));
         assert_eq!(offset + Offset::new(-17, 12), Offset::new(7, 12));
-        assert_eq!(offset + 17_u32, Offset::new(5, 12));
+        assert_eq!(offset + 17_i32, Offset::new(5, 12));
 
         offset += 17_i32;
         assert_eq!(offset, Offset::new(5, 12));
@@ -182,7 +148,7 @@ mod tests {
         assert_eq!(offset, Offset::new(7, 12));
         offset = Offset::new(0, 12);
 
-        offset += 17_u32;
+        offset += 17_i32;
         assert_eq!(offset, Offset::new(5, 12));
     }
 
@@ -194,7 +160,7 @@ mod tests {
         assert_eq!(offset - -17_i32, Offset::new(5, 12));
         assert_eq!(offset - Offset::new(17, 12), Offset::new(7, 12));
         assert_eq!(offset - Offset::new(-17, 12), Offset::new(5, 12));
-        assert_eq!(offset - 17_u32, Offset::new(7, 12));
+        assert_eq!(offset - 17_i32, Offset::new(7, 12));
 
         offset -= 17_i32;
         assert_eq!(offset, Offset::new(7, 12));
@@ -212,7 +178,7 @@ mod tests {
         assert_eq!(offset, Offset::new(5, 12));
 
         offset = Offset::new(0, 12);
-        offset -= 17_u32;
+        offset -= 17_i32;
         assert_eq!(offset, Offset::new(7, 12));
     }
 
@@ -224,7 +190,7 @@ mod tests {
         assert_eq!(offset * -5_i32, Offset::new(2, 12));
         assert_eq!(offset * Offset::new(5, 12), Offset::new(10, 12));
         assert_eq!(offset * Offset::new(-5, 12), Offset::new(2, 12));
-        assert_eq!(offset * 5_u32, Offset::new(10, 12));
+        assert_eq!(offset * 5_i32, Offset::new(10, 12));
 
         offset *= 5_i32;
         assert_eq!(offset, Offset::new(10, 12));
@@ -242,7 +208,7 @@ mod tests {
         assert_eq!(offset, Offset::new(2, 12));
 
         offset = Offset::new(2, 12);
-        offset *= 5_u32;
+        offset *= 5_i32;
         assert_eq!(offset, Offset::new(10, 12));
     }
 
@@ -254,7 +220,7 @@ mod tests {
         assert_eq!(offset / -5_i32, Offset::new(1, 12));
         assert_eq!(offset / Offset::new(5, 12), Offset::new(2, 12));
         assert_eq!(offset / Offset::new(-5, 12), Offset::new(1, 12));
-        assert_eq!(offset / 5_u32, Offset::new(2, 12));
+        assert_eq!(offset / 5_i32, Offset::new(2, 12));
 
         offset /= 5_i32;
         assert_eq!(offset, Offset::new(2, 12));
@@ -272,7 +238,7 @@ mod tests {
         assert_eq!(offset, Offset::new(1, 12));
 
         offset = Offset::new(10, 12);
-        offset /= 5_u32;
+        offset /= 5_i32;
         assert_eq!(offset, Offset::new(2, 12));
     }
 
@@ -284,7 +250,7 @@ mod tests {
         assert_eq!(offset % -5_i32, Offset::new(1, 12));
         assert_eq!(offset % Offset::new(5, 12), Offset::new(3, 12));
         assert_eq!(offset % Offset::new(-5, 12), Offset::new(1, 12));
-        assert_eq!(offset % 5_u32, Offset::new(3, 12));
+        assert_eq!(offset % 5_i32, Offset::new(3, 12));
 
         offset %= 5_i32;
         assert_eq!(offset, Offset::new(3, 12));
@@ -302,7 +268,7 @@ mod tests {
         assert_eq!(offset, Offset::new(1, 12));
 
         offset = Offset::new(8, 12);
-        offset %= 5_u32;
+        offset %= 5_i32;
         assert_eq!(offset, Offset::new(3, 12));
     }
 }
